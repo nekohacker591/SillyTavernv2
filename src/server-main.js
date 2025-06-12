@@ -337,31 +337,36 @@ async function postSetupTasks(result) {
 
     if (result.useIPv6 && !result.v6Failed) {
         logListen += color.green(
-            ' IPv6: ' + cliArgs.getIPv6ListenUrl().host,
+            ' IPv6: ' + cliArgs.getIPv6ListenUrl().host + ':' + cliArgs.port, // Added port here for clarity
         );
+    } else if (result.useIPv6 && result.v6Failed) {
+        logListen += color.red(' IPv6: FAILED');
     }
+
 
     if (result.useIPv4 && !result.v4Failed) {
         logListen += color.green(
-            ' IPv4: ' + cliArgs.getIPv4ListenUrl().host,
+            ' IPv4: ' + cliArgs.getIPv4ListenUrl().host + ':' + cliArgs.port, // Added port here for clarity
         );
+    } else if (result.useIPv4 && result.v4Failed) {
+        logListen += color.red(' IPv4: FAILED');
     }
+
 
     const goToLog = 'Go to: ' + color.blue(autorunUrl) + ' to open SillyTavern';
     const plainGoToLog = removeColorFormatting(goToLog);
 
     console.log(logListen);
-    if (cliArgs.listen) { // This will now be true due to our change below, or if it was already true
-        console.log();
-        console.log('Server is configured to listen on all interfaces (0.0.0.0 for IPv4, :: for IPv6).');
+    if (cliArgs.listen) {
+        // Updated message for forced 0.0.0.0 due to Render requirements
+        if (cliArgs.listenHostIPv4 === '0.0.0.0' && cliArgs.enableIPv4 && !cliArgs.enableIPv6) {
+             console.log();
+             console.log(color.yellow('Server is configured to listen on 0.0.0.0 (IPv4 only) as required for platforms like Render.'));
+        } else {
+            console.log();
+            console.log('Server is configured to listen on all available interfaces.');
+        }
         console.log('Check the "access.log" file in the data directory to inspect incoming connections:', color.green(getAccessLogPath()));
-    } else {
-        // This 'else' block should ideally not be hit if our modification works as intended
-        // and ServerStartup respects cliArgs.listen for its logging messages too.
-        // However, the original message about changing config.yaml is now less relevant
-        // if we are programmatically overriding it.
-        console.log();
-        console.log('INFO: Server was originally configured for localhost only, but has been set to listen on all interfaces.');
     }
     console.log('\n' + getSeparator(plainGoToLog.length) + '\n');
     console.log(goToLog);
@@ -390,22 +395,40 @@ initUserStorage(globalThis.DATA_ROOT)
     .then(preSetupTasks)
     .then(apply404Middleware)
     .then(() => {
-        // --- MODIFICATION START ---
-        // Force cliArgs.listen to true. This tells ServerStartup to bind to
-        // 0.0.0.0 (for IPv4) and/or :: (for IPv6) instead of localhost.
-        // This is based on the server's own documented behavior:
-        // "To limit connections to internal localhost only ([::1] or 127.0.0.1), change the setting in config.yaml to "listen: false"."
-        // So, by ensuring listen is true, we get the opposite: listen on all interfaces.
-        if (!cliArgs.listen) {
-            console.log(color.yellow('MODIFICATION: Overriding cliArgs.listen to true to ensure server listens on all interfaces (0.0.0.0 / ::) instead of just localhost.'));
-            cliArgs.listen = true;
+        // --- MODIFICATION FOR RENDER ---
+        const RENDER_PORT_ENV = process.env.PORT;
+        if (RENDER_PORT_ENV) {
+            console.log(color.yellow(`MODIFICATION: Render environment detected. Setting port to ${RENDER_PORT_ENV}.`));
+            // Ensure cliArgs.port is a number. Config/defaults might already set it.
+            cliArgs.port = parseInt(RENDER_PORT_ENV, 10);
         } else {
-            console.log(color.cyan('INFO: cliArgs.listen is already true. Server should listen on all interfaces by default.'));
+            console.log(color.cyan('INFO: No process.env.PORT detected. Using configured port or default.'));
+            // If cliArgs.port isn't set by config or command line, ensure it has SillyTavern's default.
+            if (cliArgs.port === undefined || cliArgs.port === null) { // Check if it's truly unset
+                cliArgs.port = 7860; // Default SillyTavern port
+                console.log(color.cyan(`INFO: cliArgs.port was undefined, setting to default ${cliArgs.port}.`));
+            }
         }
-        // If you wanted to *only* use IPv4 and force 0.0.0.0, you'd also do:
-        // cliArgs.enableIPv4 = true;
-        // cliArgs.enableIPv6 = false; // or ensure it's false from config
-        // But for "use 0.0.0.0 instead of localhost", this handles the IPv4 part correctly if IPv4 is enabled.
+
+        console.log(color.yellow('MODIFICATION: Configuring for Render: listen=true, IPv4 only, host explicitly 0.0.0.0.'));
+        cliArgs.listen = true;
+        cliArgs.enableIPv4 = true;
+        cliArgs.enableIPv6 = false; // Force IPv4 only as Render asks for 0.0.0.0
+
+        // CRITICAL: Explicitly set the IPv4 listen host to '0.0.0.0'.
+        // This overrides any 'localhost' settings from config.yaml for listenHost or listenHostIPv4
+        // when ServerStartup calls cliArgs.getIPv4ListenHost().
+        cliArgs.listenHostIPv4 = '0.0.0.0';
+        // We don't need to touch listenHostIPv6 as enableIPv6 is false.
+
+        // Log the effective settings that ServerStartup will use, by calling the same getters.
+        console.log(color.cyan(
+            `Effective cliArgs for ServerStartup: ` +
+            `Port=${cliArgs.port}, Listen=${cliArgs.listen}, ` +
+            `EnableIPv4=${cliArgs.enableIPv4}, IPv4Host=${cliArgs.getIPv4ListenHost()}, ` +
+            `EnableIPv6=${cliArgs.enableIPv6}` +
+            (cliArgs.enableIPv6 ? `, IPv6Host=${cliArgs.getIPv6ListenHost()}` : '')
+        ));
         // --- MODIFICATION END ---
         return new ServerStartup(app, cliArgs).start();
     })
