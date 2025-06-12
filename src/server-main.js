@@ -319,8 +319,8 @@ async function preSetupTasks() {
  * @returns {Promise<void>}
  */
 async function postSetupTasks(result) {
-    const autorunHostname = await cliArgs.getAutorunHostname(result); // This will use the forced port
-    const autorunUrl = cliArgs.getAutorunUrl(autorunHostname); // This will use the forced port
+    const autorunHostname = await cliArgs.getAutorunHostname(result);
+    const autorunUrl = cliArgs.getAutorunUrl(autorunHostname);
 
     if (cliArgs.autorun) {
         try {
@@ -335,9 +335,9 @@ async function postSetupTasks(result) {
 
     let logListen = 'SillyTavern is listening on';
 
-    if (result.useIPv6 && !result.v6Failed) { // Should be false due to our settings
+    if (result.useIPv6 && !result.v6Failed) {
         logListen += color.green(
-            ' IPv6: ' + cliArgs.getIPv6ListenUrl().host + ':' + cliArgs.port,
+            ' IPv6: ' + cliArgs.getIPv6ListenUrl().host + ':' + cliArgs.port, // Added port here for clarity
         );
     } else if (result.useIPv6 && result.v6Failed) {
         logListen += color.red(' IPv6: FAILED');
@@ -346,22 +346,22 @@ async function postSetupTasks(result) {
 
     if (result.useIPv4 && !result.v4Failed) {
         logListen += color.green(
-            // Use cliArgs.port directly here as getIPv4ListenUrl() only gives host
-            ' IPv4: ' + cliArgs.getIPv4ListenUrl().host + ':' + cliArgs.port,
+            ' IPv4: ' + cliArgs.getIPv4ListenUrl().host + ':' + cliArgs.port, // Added port here for clarity
         );
     } else if (result.useIPv4 && result.v4Failed) {
         logListen += color.red(' IPv4: FAILED');
     }
 
 
-    const goToLog = 'Go to: ' + color.blue(autorunUrl) + ' to open SillyTavern'; // autorunUrl will have port 10000
+    const goToLog = 'Go to: ' + color.blue(autorunUrl) + ' to open SillyTavern';
     const plainGoToLog = removeColorFormatting(goToLog);
 
     console.log(logListen);
     if (cliArgs.listen) {
-        if (cliArgs.listenHostIPv4 === '0.0.0.0' && cliArgs.enableIPv4 && !cliArgs.enableIPv6 && cliArgs.port === 10000) {
+        // Updated message for forced 0.0.0.0 due to Render requirements
+        if (cliArgs.listenHostIPv4 === '0.0.0.0' && cliArgs.enableIPv4 && !cliArgs.enableIPv6) {
              console.log();
-             console.log(color.yellow(`Server is configured to listen on 0.0.0.0:${cliArgs.port} (IPv4 only) as required.`));
+             console.log(color.yellow('Server is configured to listen on 0.0.0.0 (IPv4 only) as required for platforms like Render.'));
         } else {
             console.log();
             console.log('Server is configured to listen on all available interfaces.');
@@ -395,35 +395,39 @@ initUserStorage(globalThis.DATA_ROOT)
     .then(preSetupTasks)
     .then(apply404Middleware)
     .then(() => {
-        // --- MODIFICATION FOR RENDER & FORCED PORT 10000 ---
-        // Block for handling process.env.PORT, but it will be overridden.
+        // --- MODIFICATION FOR RENDER ---
         const RENDER_PORT_ENV = process.env.PORT;
         if (RENDER_PORT_ENV) {
-            console.log(color.cyan(`INFO: Render environment variable PORT detected as ${RENDER_PORT_ENV}, but will be overridden.`));
-            // cliArgs.port = parseInt(RENDER_PORT_ENV, 10); // We don't set it here anymore
+            console.log(color.yellow(`MODIFICATION: Render environment detected. Setting port to ${RENDER_PORT_ENV}.`));
+            // Ensure cliArgs.port is a number. Config/defaults might already set it.
+            cliArgs.port = parseInt(RENDER_PORT_ENV, 10);
         } else {
-            console.log(color.cyan('INFO: No process.env.PORT detected. Will use hardcoded port.'));
+            console.log(color.cyan('INFO: No process.env.PORT detected. Using configured port or default.'));
+            // If cliArgs.port isn't set by config or command line, ensure it has SillyTavern's default.
+            if (cliArgs.port === undefined || cliArgs.port === null) { // Check if it's truly unset
+                cliArgs.port = 7860; // Default SillyTavern port
+                console.log(color.cyan(`INFO: cliArgs.port was undefined, setting to default ${cliArgs.port}.`));
+            }
         }
 
-        // Force port to 10000, overriding any environment, config, or CLI arguments.
-        console.log(color.red('MODIFICATION: Forcing port to 10000.'));
-        cliArgs.port = 10000;
-
-        console.log(color.yellow('MODIFICATION: Configuring for 0.0.0.0 host: listen=true, IPv4 only.'));
+        console.log(color.yellow('MODIFICATION: Configuring for Render: listen=true, IPv4 only, host explicitly 0.0.0.0.'));
         cliArgs.listen = true;
         cliArgs.enableIPv4 = true;
         cliArgs.enableIPv6 = false; // Force IPv4 only as Render asks for 0.0.0.0
 
         // CRITICAL: Explicitly set the IPv4 listen host to '0.0.0.0'.
+        // This overrides any 'localhost' settings from config.yaml for listenHost or listenHostIPv4
+        // when ServerStartup calls cliArgs.getIPv4ListenHost().
         cliArgs.listenHostIPv4 = '0.0.0.0';
+        // We don't need to touch listenHostIPv6 as enableIPv6 is false.
 
-        // Log the effective settings that ServerStartup will use
+        // Log the effective settings that ServerStartup will use, by calling the same getters.
         console.log(color.cyan(
             `Effective cliArgs for ServerStartup: ` +
             `Port=${cliArgs.port}, Listen=${cliArgs.listen}, ` +
             `EnableIPv4=${cliArgs.enableIPv4}, IPv4Host=${cliArgs.getIPv4ListenHost()}, ` +
             `EnableIPv6=${cliArgs.enableIPv6}` +
-            (cliArgs.enableIPv6 ? `, IPv6Host=${cliArgs.getIPv6ListenHost()}` : '') // Should be empty
+            (cliArgs.enableIPv6 ? `, IPv6Host=${cliArgs.getIPv6ListenHost()}` : '')
         ));
         // --- MODIFICATION END ---
         return new ServerStartup(app, cliArgs).start();
