@@ -351,10 +351,17 @@ async function postSetupTasks(result) {
     const plainGoToLog = removeColorFormatting(goToLog);
 
     console.log(logListen);
-    if (cliArgs.listen) {
+    if (cliArgs.listen) { // This will now be true due to our change below, or if it was already true
         console.log();
-        console.log('To limit connections to internal localhost only ([::1] or 127.0.0.1), change the setting in config.yaml to "listen: false".');
+        console.log('Server is configured to listen on all interfaces (0.0.0.0 for IPv4, :: for IPv6).');
         console.log('Check the "access.log" file in the data directory to inspect incoming connections:', color.green(getAccessLogPath()));
+    } else {
+        // This 'else' block should ideally not be hit if our modification works as intended
+        // and ServerStartup respects cliArgs.listen for its logging messages too.
+        // However, the original message about changing config.yaml is now less relevant
+        // if we are programmatically overriding it.
+        console.log();
+        console.log('INFO: Server was originally configured for localhost only, but has been set to listen on all interfaces.');
     }
     console.log('\n' + getSeparator(plainGoToLog.length) + '\n');
     console.log(goToLog);
@@ -382,5 +389,24 @@ initUserStorage(globalThis.DATA_ROOT)
     .then(verifySecuritySettings)
     .then(preSetupTasks)
     .then(apply404Middleware)
-    .then(() => new ServerStartup(app, cliArgs).start())
+    .then(() => {
+        // --- MODIFICATION START ---
+        // Force cliArgs.listen to true. This tells ServerStartup to bind to
+        // 0.0.0.0 (for IPv4) and/or :: (for IPv6) instead of localhost.
+        // This is based on the server's own documented behavior:
+        // "To limit connections to internal localhost only ([::1] or 127.0.0.1), change the setting in config.yaml to "listen: false"."
+        // So, by ensuring listen is true, we get the opposite: listen on all interfaces.
+        if (!cliArgs.listen) {
+            console.log(color.yellow('MODIFICATION: Overriding cliArgs.listen to true to ensure server listens on all interfaces (0.0.0.0 / ::) instead of just localhost.'));
+            cliArgs.listen = true;
+        } else {
+            console.log(color.cyan('INFO: cliArgs.listen is already true. Server should listen on all interfaces by default.'));
+        }
+        // If you wanted to *only* use IPv4 and force 0.0.0.0, you'd also do:
+        // cliArgs.enableIPv4 = true;
+        // cliArgs.enableIPv6 = false; // or ensure it's false from config
+        // But for "use 0.0.0.0 instead of localhost", this handles the IPv4 part correctly if IPv4 is enabled.
+        // --- MODIFICATION END ---
+        return new ServerStartup(app, cliArgs).start();
+    })
     .then(postSetupTasks);
